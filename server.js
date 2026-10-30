@@ -81,6 +81,40 @@ app.get("/admin/mi-cuenta", async (req, res) => {
   }
 });
 
+app.get("/admin/locales", async (req, res) => {
+  if (!process.env.ADMIN_KEY ||
+      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
+    return res.sendStatus(401);
+  }
+
+  try {
+    const userId = process.env.MP_USER_ID;
+
+    if (!userId) {
+      return res.status(500).json({
+        error: "Falta configurar MP_USER_ID en Render"
+      });
+    }
+
+    const response = await fetch(
+      `https://api.mercadopago.com/users/${userId}/stores/search`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
+        }
+      }
+    );
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+
+  } catch (error) {
+    res.status(500).json({
+      error: "Error consultando sucursales"
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
