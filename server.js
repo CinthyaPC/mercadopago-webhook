@@ -2,7 +2,12 @@
 const express = require("express");
 
 const app = express();
+const crypto = require("crypto");
+
 app.use(express.json());
+
+const STORE_ID = "82632443";
+const POS_EXTERNAL_ID = "caja1sistemastecnii";
 
 // Página principal
 app.get("/", (req, res) => {
@@ -19,18 +24,48 @@ app.post("/webhooks/mercadopago", (req, res) => {
   res.sendStatus(200);
 });
 
-// Consulta privada de cajas
-app.get("/admin/cajas", async (req, res) => {
-  const adminKey = process.env.ADMIN_KEY;
-  const receivedKey = req.get("x-admin-key");
-
-  if (!adminKey || receivedKey !== adminKey) {
-    return res.sendStatus(401);
+// Función para proteger las rutas administrativas
+function adminAutorizado(req, res) {
+  if (
+    !process.env.ADMIN_KEY ||
+    req.get("x-admin-key") !== process.env.ADMIN_KEY
+  ) {
+    res.sendStatus(401);
+    return false;
   }
+
+  return true;
+}
+
+// Consultar cajas de producción
+app.get("/admin/cajas", async (req, res) => {
+  if (!adminAutorizado(req, res)) return;
 
   try {
     const response = await fetch(
       "https://api.mercadopago.com/v2/pos?limit=30&offset=0",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
+        }
+      }
+    );
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Consultar cuenta de producción
+app.get("/admin/mi-cuenta", async (req, res) => {
+  if (!adminAutorizado(req, res)) return;
+
+  try {
+    const response = await fetch(
+      "https://api.mercadopago.com/users/me",
       {
         headers: {
           Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
@@ -44,55 +79,26 @@ app.get("/admin/cajas", async (req, res) => {
       return res.status(response.status).json(data);
     }
 
-    res.json(data);
-  } catch (error) {
-    console.error("Error consultando cajas:", error.message);
-    res.status(500).json({ error: "Error al consultar Mercado Pago" });
-  }
-});
-
-app.get("/admin/mi-cuenta", async (req, res) => {
-  if (!process.env.ADMIN_KEY ||
-      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
-    return res.sendStatus(401);
-  }
-
-  try {
-    const response = await fetch("https://api.mercadopago.com/users/me", {
-      headers: {
-        Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
-      }
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: data.message || "Error consultando la cuenta"
-      });
-    }
-
     res.json({
       user_id: data.id,
       nickname: data.nickname
     });
+
   } catch (error) {
-    res.status(500).json({ error: "Error de conexión" });
+    res.status(500).json({ error: error.message });
   }
 });
 
+// Consultar sucursales de producción
 app.get("/admin/locales", async (req, res) => {
-  if (!process.env.ADMIN_KEY ||
-      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
-    return res.sendStatus(401);
-  }
+  if (!adminAutorizado(req, res)) return;
 
   try {
     const userId = process.env.MP_USER_ID;
 
-    if (!userId) {
+    if (!userId || !process.env.MP_ACCESS_TOKEN) {
       return res.status(500).json({
-        error: "Falta configurar MP_USER_ID en Render"
+        error: "Faltan las credenciales de producción"
       });
     }
 
@@ -109,82 +115,78 @@ app.get("/admin/locales", async (req, res) => {
     res.status(response.status).json(data);
 
   } catch (error) {
-    res.status(500).json({
-      error: "Error consultando sucursales"
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.post("/admin/crear-sucursal", async (req, res) => {
-  if (!process.env.ADMIN_KEY ||
-      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
-    return res.sendStatus(401);
-  }
+// Verificar sucursal y cajas de prueba
+app.get("/admin/verificar-prueba", async (req, res) => {
+  if (!adminAutorizado(req, res)) return;
 
   const token = process.env.MP_TEST_ACCESS_TOKEN;
-  const userId = process.env.MP_TEST_USER_ID;
 
-  if (!token || !userId) {
+  if (!token) {
     return res.status(500).json({
-      error: "Faltan las credenciales de prueba en Render"
+      error: "Falta MP_TEST_ACCESS_TOKEN"
     });
   }
 
   try {
-    const response = await fetch(
-      `https://api.mercadopago.com/users/${userId}/stores`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: "Sistemas Tecn II",
-          business_hours: {
-            monday: [{ open: "00:00", close: "23:59" }],
-            tuesday: [{ open: "00:00", close: "23:59" }],
-            wednesday: [{ open: "00:00", close: "23:59" }],
-            thursday: [{ open: "00:00", close: "23:59" }],
-            friday: [{ open: "00:00", close: "23:59" }],
-            saturday: [{ open: "00:00", close: "23:59" }],
-            sunday: [{ open: "00:00", close: "23:59" }]
-          },
-          location: {
-            street_name: "San Martín",
-            street_number: "717",
-            city_name: "San Fernando del Valle de Catamarca",
-            state_name: "Catamarca",
-            latitude: -28.46945,
-            longitude: -65.77659,
-            reference: "Proyecto académico - ubicación simulada"
-          },
-          external_id: "sistemas-tecn-ii"
-        })
+    const [storeResponse, posResponse] = await Promise.all([
+      fetch(
+        `https://api.mercadopago.com/stores/${STORE_ID}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      ),
+
+      fetch(
+        "https://api.mercadopago.com/v2/pos?limit=30&offset=0",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      )
+    ]);
+
+    const storeData = await storeResponse.json();
+    const posData = await posResponse.json();
+
+    const cajas = Array.isArray(posData.data)
+      ? posData.data.filter(
+          caja => String(caja.store_id) === STORE_ID
+        )
+      : [];
+
+    res.json({
+      sucursal: {
+        status: storeResponse.status,
+        datos: storeData
+      },
+      cajas: {
+        status: posResponse.status,
+        resultados: cajas
       }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json(data);
-    }
-
-    res.json(data);
+    });
 
   } catch (error) {
-    console.error("Error creando sucursal:", error.message);
-    res.status(500).json({
-      error: "No se pudo conectar con Mercado Pago"
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-
+// Crear Caja 1 de prueba
 app.post("/admin/crear-caja", async (req, res) => {
-  if (!process.env.ADMIN_KEY ||
-      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
-    return res.sendStatus(401);
+  if (!adminAutorizado(req, res)) return;
+
+  const token = process.env.MP_TEST_ACCESS_TOKEN;
+
+  if (!token) {
+    return res.status(500).json({
+      error: "Falta MP_TEST_ACCESS_TOKEN"
+    });
   }
 
   try {
@@ -193,14 +195,17 @@ app.post("/admin/crear-caja", async (req, res) => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.MP_TEST_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
-          "X-Idempotency-Key": require("crypto").randomUUID()
+
+          // Mantener esta clave para esta misma creación.
+          "X-Idempotency-Key":
+            "6e5e9c21-6a80-4e2d-9a11-826324430001"
         },
         body: JSON.stringify({
           name: "Caja 1 Sistemas Tecn II",
-          store_id: "82632443",
-          external_id: "caja1sistemastecnii",
+          store_id: STORE_ID,
+          external_id: POS_EXTERNAL_ID,
           config: {
             qr: {
               operating_mode: "pdv"
@@ -214,78 +219,15 @@ app.post("/admin/crear-caja", async (req, res) => {
     res.status(response.status).json(data);
 
   } catch (error) {
+    console.error("Error creando caja:", error.message);
+
     res.status(500).json({
-      error: error.message
-    });
-  }
-});
-  }
-
-  try {
-    const response = await fetch(
-      "https://api.mercadopago.com/pos",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: "Caja 1 - Sistemas Tecn II",
-          fixed_amount: false,
-          store_id: 82632443,
-          external_id: "caja-1-sistemas-tecn-ii",
-          category: 621102
-        })
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json(data);
-    }
-
-    res.json(data);
-
-  } catch (error) {
-    res.status(500).json({
-      error: "Error creando caja de prueba"
+      error: "No se pudo crear la caja de prueba"
     });
   }
 });
 
-app.get("/admin/verificar-prueba", async (req, res) => {
-  if (!process.env.ADMIN_KEY ||
-      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
-    return res.sendStatus(401);
-  }
-
-  const token = process.env.MP_TEST_ACCESS_TOKEN;
-  const userId = process.env.MP_TEST_USER_ID;
-
-  try {
-    const [sucursales, cajas] = await Promise.all([
-      fetch(
-        `https://api.mercadopago.com/users/${userId}/stores/search?external_id=sistemastecnii`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      ),
-      fetch(
-        "https://api.mercadopago.com/v2/pos?store_id=82632443",
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-    ]);
-
-    res.status(200).json({
-      sucursales: await sucursales.json(),
-      cajas: await cajas.json()
-    });
-
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// Inicio del servidor
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
