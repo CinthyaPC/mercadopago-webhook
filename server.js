@@ -51,6 +51,36 @@ app.get("/admin/cajas", async (req, res) => {
   }
 });
 
+app.get("/admin/mi-cuenta", async (req, res) => {
+  if (!process.env.ADMIN_KEY ||
+      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
+    return res.sendStatus(401);
+  }
+
+  try {
+    const response = await fetch("https://api.mercadopago.com/users/me", {
+      headers: {
+        Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
+      }
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: data.message || "Error consultando la cuenta"
+      });
+    }
+
+    res.json({
+      user_id: data.id,
+      nickname: data.nickname
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Error de conexión" });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
