@@ -115,6 +115,71 @@ app.get("/admin/locales", async (req, res) => {
   }
 });
 
+app.post("/admin/crear-sucursal", async (req, res) => {
+  if (!process.env.ADMIN_KEY ||
+      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
+    return res.sendStatus(401);
+  }
+
+  const token = process.env.MP_TEST_ACCESS_TOKEN;
+  const userId = process.env.MP_TEST_USER_ID;
+
+  if (!token || !userId) {
+    return res.status(500).json({
+      error: "Faltan las credenciales de prueba en Render"
+    });
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.mercadopago.com/users/${userId}/stores`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: "Sistemas Tecn II",
+          business_hours: {
+            monday: [{ open: "00:00", close: "23:59" }],
+            tuesday: [{ open: "00:00", close: "23:59" }],
+            wednesday: [{ open: "00:00", close: "23:59" }],
+            thursday: [{ open: "00:00", close: "23:59" }],
+            friday: [{ open: "00:00", close: "23:59" }],
+            saturday: [{ open: "00:00", close: "23:59" }],
+            sunday: [{ open: "00:00", close: "23:59" }]
+          },
+          location: {
+            street_name: "San Martín",
+            street_number: "717",
+            city_name: "San Fernando del Valle de Catamarca",
+            state_name: "Catamarca",
+            latitude: -28.46945,
+            longitude: -65.77659,
+            reference: "Proyecto académico - ubicación simulada"
+          },
+          external_id: "sistemas-tecn-ii"
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
+    res.json(data);
+
+  } catch (error) {
+    console.error("Error creando sucursal:", error.message);
+    res.status(500).json({
+      error: "No se pudo conectar con Mercado Pago"
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
