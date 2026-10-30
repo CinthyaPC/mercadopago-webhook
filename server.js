@@ -180,18 +180,45 @@ app.post("/admin/crear-sucursal", async (req, res) => {
   }
 });
 
+
 app.post("/admin/crear-caja", async (req, res) => {
   if (!process.env.ADMIN_KEY ||
       req.get("x-admin-key") !== process.env.ADMIN_KEY) {
     return res.sendStatus(401);
   }
 
-  const token = process.env.MP_TEST_ACCESS_TOKEN;
+  try {
+    const response = await fetch(
+      "https://api.mercadopago.com/v2/pos",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.MP_TEST_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": require("crypto").randomUUID()
+        },
+        body: JSON.stringify({
+          name: "Caja 1 Sistemas Tecn II",
+          store_id: "82632443",
+          external_id: "caja1sistemastecnii",
+          config: {
+            qr: {
+              operating_mode: "pdv"
+            }
+          }
+        })
+      }
+    );
 
-  if (!token) {
-    return res.status(500).json({
-      error: "Falta MP_TEST_ACCESS_TOKEN"
+    const data = await response.json();
+    res.status(response.status).json(data);
+
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
     });
+  }
+});
   }
 
   try {
