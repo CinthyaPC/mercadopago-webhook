@@ -255,6 +255,37 @@ app.post("/admin/crear-caja", async (req, res) => {
   }
 });
 
+app.get("/admin/verificar-prueba", async (req, res) => {
+  if (!process.env.ADMIN_KEY ||
+      req.get("x-admin-key") !== process.env.ADMIN_KEY) {
+    return res.sendStatus(401);
+  }
+
+  const token = process.env.MP_TEST_ACCESS_TOKEN;
+  const userId = process.env.MP_TEST_USER_ID;
+
+  try {
+    const [sucursales, cajas] = await Promise.all([
+      fetch(
+        `https://api.mercadopago.com/users/${userId}/stores/search?external_id=sistemastecnii`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      ),
+      fetch(
+        "https://api.mercadopago.com/v2/pos?store_id=82632443",
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+    ]);
+
+    res.status(200).json({
+      sucursales: await sucursales.json(),
+      cajas: await cajas.json()
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
