@@ -13,43 +13,60 @@ const MP_USER_ID = process.env.MP_USER_ID;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 const ESP32_API_KEY = process.env.ESP32_API_KEY;
 
-// Identificadores exclusivos de producción
+// Datos de la sucursal y Caja 1 ya creadas en Mercado Pago
 const STORE_EXTERNAL_ID = "sistemastecniiprod";
 const POS_EXTERNAL_ID = "caja1sistemastecnii";
 
-const STORE_NAME = "Sistemas Tecn II";
-const POS_NAME = "Caja 1 Sistemas Tecn II";
+
+// --------------------------------------------------
+// VERIFICAR CONFIGURACIÓN
+// --------------------------------------------------
 
 function checkConfig() {
-  const missing = [
-    ["MP_ACCESS_TOKEN", MP_ACCESS_TOKEN],
-    ["MP_USER_ID", MP_USER_ID],
-    ["ADMIN_KEY", ADMIN_KEY],
-    ["ESP32_API_KEY", ESP32_API_KEY]
-  ].filter(([, value]) => !value).map(([name]) => name);
+  const missing = [];
 
-  if (missing.length) {
-    throw new Error("Faltan variables en Render: " + missing.join(", "));
+  if (!MP_ACCESS_TOKEN) missing.push("MP_ACCESS_TOKEN");
+  if (!MP_USER_ID) missing.push("MP_USER_ID");
+  if (!ADMIN_KEY) missing.push("ADMIN_KEY");
+  if (!ESP32_API_KEY) missing.push("ESP32_API_KEY");
+
+  if (missing.length > 0) {
+    throw new Error(
+      "Faltan variables de entorno: " + missing.join(", ")
+    );
   }
 }
 
+
+// --------------------------------------------------
+// COMUNICACIÓN CON MERCADO PAGO
+// --------------------------------------------------
+
 async function mpRequest(path, options = {}) {
-  const response = await fetch(`${MP_API}${path}`, {
+  const response = await fetch(MP_API + path, {
     method: options.method || "GET",
     headers: {
       Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
       "Content-Type": "application/json",
       ...(options.headers || {})
     },
-    ...(options.body ? { body: JSON.stringify(options.body) } : {})
+    ...(options.body
+      ? { body: JSON.stringify(options.body) }
+      : {})
   });
 
-  const data = await response.json().catch(() => ({}));
+  const responseText = await response.text();
+
+  let data;
+
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = { message: responseText };
+  }
 
   if (!response.ok) {
-    const error = new Error(
-      data.message || data.error || `Error HTTP ${response.status}`
-    );
+    const error = new Error("Error en Mercado Pago");
     error.status = response.status;
     error.details = data;
     throw error;
@@ -58,211 +75,123 @@ async function mpRequest(path, options = {}) {
   return data;
 }
 
+
+// --------------------------------------------------
+// AUTENTICACIÓN
+// --------------------------------------------------
+
 function adminAuth(req, res, next) {
-  if (req.get("x-admin-key") !== ADMIN_KEY) {
-    return res.status(401).json({ error: "Clave de administrador incorrecta" });
+  if (req.headers["x-admin-key"] !== ADMIN_KEY) {
+    return res.status(401).json({
+      error: "No autorizado"
+    });
   }
+
   next();
 }
+
 
 function esp32Auth(req, res, next) {
-  if (req.get("x-device-key") !== ESP32_API_KEY) {
-    return res.status(401).json({ error: "Dispositivo no autorizado" });
+  if (req.headers["x-device-key"] !== ESP32_API_KEY) {
+    return res.status(401).json({
+      error: "Dispositivo no autorizado"
+    });
   }
+
   next();
 }
 
-function uuidV4(value) {
-  return typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+// --------------------------------------------------
+// VALIDACIONES
+// --------------------------------------------------
+
+function esUUIDv4(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-app.get("/", (req, res) => {
-  res.send("Servidor Mercado Pago de producción funcionando");
-});
 
-// CONFIGURAR SUCURSAL Y CAJA DE PRODUCCIÓN
-app.post("/admin/configurar-produccion", adminAuth, async (req, res) => {
-  try {
-    checkConfig();
+function validarMonto(value) {
+  const monto = Number(value);
 
-    // Buscar sucursal. Un 404 store_not_found significa que aún no existe.
-    let stores = [];
-
-    try {
-      const result = await mpRequest(
-        `/users/${MP_USER_ID}/stores/search?external_id=${STORE_EXTERNAL_ID}`
-      );
-      stores = Array.isArray(result.results) ? result.results : [];
-    } catch (error) {
-      if (
-        error.status !== 404 ||
-        error.details?.error !== "store_not_found"
-      ) {
-        throw error;
-      }
-    }
-
-    let store = stores.find(
-      item => item.external_id === STORE_EXTERNAL_ID
-    );
-
-    // Crear sucursal si no existe.
-    if (!store) {
-      store = await mpRequest(`/users/${MP_USER_ID}/stores`, {
-        method: "POST",
-        body: {
-          name: STORE_NAME,
-          external_id: STORE_EXTERNAL_ID,
-          location: {
-            street_name: "San Matías",
-            street_number: "88",
-            city_name: "San Fernando del Valle de Catamarca",
-            state_name: "Catamarca",
-            latitude: -28.495044,
-            longitude: -65.803691,
-            reference: "San Matías 88"
-          }
-        }
-      });
-    }
-
-    if (!store.id) {
-      throw new Error("La API no devolvió el ID de la sucursal");
-    }
-
-    // Buscar caja por identificador externo y sucursal.
-    const posSearch = await mpRequest(
-      `/v2/pos?external_id=${POS_EXTERNAL_ID}&store_id=${encodeURIComponent(String(store.id))}`
-    );
-
-    const positions = Array.isArray(posSearch.data)
-      ? posSearch.data
-      : [];
-
-    let pos = positions.find(item =>
-      item.external_id === POS_EXTERNAL_ID &&
-      String(item.store_id) === String(store.id)
-    );
-
-    // Crear caja si no existe.
-    if (!pos) {
-      pos = await mpRequest("/v2/pos", {
-        method: "POST",
-        headers: {
-          "X-Idempotency-Key": crypto.randomUUID()
-        },
-        body: {
-          name: POS_NAME,
-          store_id: String(store.id),
-          external_id: POS_EXTERNAL_ID,
-          config: {
-            qr: {
-              operating_mode: "pdv"
-            }
-          }
-        }
-      });
-    }
-
-    if (!pos.id) {
-      throw new Error("La API no devolvió el ID de la caja");
-    }
-
-    if (pos.status !== "active") {
-      throw new Error(`La caja no está activa. Estado: ${pos.status}`);
-    }
-
-    if (!pos.qr_response?.image) {
-      throw new Error("La caja no devolvió la imagen del QR");
-    }
-
-    res.json({
-      resultado: "Configuración de producción correcta",
-      sucursal: {
-        nombre: store.name,
-        id: store.id,
-        external_id: STORE_EXTERNAL_ID
-      },
-      caja: {
-        nombre: pos.name,
-        id: pos.id,
-        external_id: POS_EXTERNAL_ID,
-        estado: pos.status
-      },
-      qr: {
-        imagen: pos.qr_response.image,
-        codigo: pos.qr_response.qr_code,
-        plantilla_pdf: pos.qr_response.template_document,
-        plantilla_imagen: pos.qr_response.template_image
-      }
-    });
-
-  } catch (error) {
-    console.error("CONFIGURACIÓN:", error.details || error.message);
-    res.status(error.status || 500).json({
-      error: "No se pudo configurar la sucursal y la caja",
-      detalle: error.details || error.message
-    });
+  if (!Number.isFinite(monto) || monto <= 0 || monto > 1000000) {
+    return null;
   }
+
+  return monto.toFixed(2);
+}
+
+
+// --------------------------------------------------
+// INICIO / ESTADO DEL SERVIDOR
+// --------------------------------------------------
+
+app.get("/", (req, res) => {
+  res.json({
+    servidor: "Sistemas Tecn II",
+    estado: "funcionando",
+    sucursal: STORE_EXTERNAL_ID,
+    caja: POS_EXTERNAL_ID
+  });
 });
 
-// CREAR ORDEN DE COBRO DESDE EL ESP32
-app.post("/esp32/crear-orden", esp32Auth, async (req, res) => {
+
+// --------------------------------------------------
+// PRUEBA: CREAR UNA ORDEN REAL DE $50
+// --------------------------------------------------
+
+app.post("/prueba/cobrar-50", adminAuth, async (req, res) => {
   try {
     checkConfig();
 
-    const monto = Number(req.body.monto);
-    const requestId = req.body.request_id;
-
-    if (!Number.isFinite(monto) || monto <= 0 || monto > 1000000) {
-      return res.status(400).json({
-        error: "Importe inválido. Debe ser mayor que cero y hasta $1.000.000."
-      });
-    }
-
-    if (!uuidV4(requestId)) {
-      return res.status(400).json({
-        error: "request_id debe ser un UUID versión 4."
-      });
-    }
-
-    const importe = monto.toFixed(2);
+    const requestId = crypto.randomUUID();
+    const importe = "50.00";
 
     const order = await mpRequest("/v1/orders", {
       method: "POST",
+
       headers: {
         "X-Idempotency-Key": requestId
       },
+
       body: {
         type: "qr",
         total_amount: importe,
-        description: "Compra - Caja 1 Sistemas Tecn II",
-        external_reference: `ESP32-${requestId}`,
+        description: "Prueba de cobro - Sistemas Tecn II",
+        external_reference: `PRUEBA-${requestId}`,
         expiration_time: "PT15M",
+
         config: {
           qr: {
             external_pos_id: POS_EXTERNAL_ID,
             mode: "static"
           }
         },
+
         transactions: {
           payments: [
-            { amount: importe }
+            {
+              amount: importe
+            }
           ]
         }
       }
     });
 
     res.status(201).json({
+      mensaje: "Orden creada correctamente",
       order_id: order.id,
-      monto: importe,
+      monto: order.total_amount,
       estado: order.status,
       referencia: order.external_reference
     });
 
   } catch (error) {
-    console.error("CREAR ORDEN:", error.details || error.message);
+    console.error(
+      "ERROR PRUEBA:",
+      error.details || error.message
+    );
+
     res.status(error.status || 500).json({
       error: "No se pudo crear la orden",
       detalle: error.details || error.message
@@ -270,73 +199,156 @@ app.post("/esp32/crear-orden", esp32Auth, async (req, res) => {
   }
 });
 
-// CONSULTAR EL ESTADO REAL DE LA ORDEN EN MERCADO PAGO
+
+// --------------------------------------------------
+// ESP32: CREAR UNA ORDEN CON EL MONTO INDICADO
+// --------------------------------------------------
+
+app.post("/esp32/crear-orden", esp32Auth, async (req, res) => {
+  try {
+    checkConfig();
+
+    const importe = validarMonto(req.body.monto);
+    const requestId = req.body.request_id;
+
+    if (!importe) {
+      return res.status(400).json({
+        error: "El monto no es válido"
+      });
+    }
+
+    if (!esUUIDv4(requestId)) {
+      return res.status(400).json({
+        error: "request_id debe ser un UUID versión 4"
+      });
+    }
+
+    const order = await mpRequest("/v1/orders", {
+      method: "POST",
+
+      headers: {
+        "X-Idempotency-Key": requestId
+      },
+
+      body: {
+        type: "qr",
+        total_amount: importe,
+        description: "Compra - Sistemas Tecn II",
+        external_reference: `ESP32-${requestId}`,
+        expiration_time: "PT15M",
+
+        config: {
+          qr: {
+            external_pos_id: POS_EXTERNAL_ID,
+            mode: "static"
+          }
+        },
+
+        transactions: {
+          payments: [
+            {
+              amount: importe
+            }
+          ]
+        }
+      }
+    });
+
+    res.status(201).json({
+      mensaje: "Orden creada",
+      order_id: order.id,
+      monto: order.total_amount,
+      estado: order.status,
+      referencia: order.external_reference
+    });
+
+  } catch (error) {
+    console.error(
+      "ERROR CREAR ORDEN:",
+      error.details || error.message
+    );
+
+    res.status(error.status || 500).json({
+      error: "No se pudo crear la orden",
+      detalle: error.details || error.message
+    });
+  }
+});
+
+
+// --------------------------------------------------
+// ESP32: CONSULTAR SI LA ORDEN FUE PAGADA
+// --------------------------------------------------
+
 app.get("/esp32/estado/:orderId", esp32Auth, async (req, res) => {
   try {
     checkConfig();
 
     const orderId = req.params.orderId;
 
-    if (!/^[A-Za-z0-9_-]{10,60}$/.test(orderId)) {
-      return res.status(400).json({ error: "ID de orden inválido" });
+    if (!orderId || !/^[a-zA-Z0-9_-]+$/.test(orderId)) {
+      return res.status(400).json({
+        error: "Identificador de orden no válido"
+      });
     }
 
     const order = await mpRequest(
       `/v1/orders/${encodeURIComponent(orderId)}`
     );
 
-    // La orden debe pertenecer a esta integración.
+    // Verificar que la orden pertenezca a este sistema
     if (
       typeof order.external_reference !== "string" ||
       !order.external_reference.startsWith("ESP32-")
     ) {
       return res.status(403).json({
-        error: "La orden no pertenece a este sistema",
-        paid: false
+        error: "La orden no pertenece a este dispositivo"
       });
     }
 
-    const payments = order.transactions?.payments || [];
-    const payment = payments[0];
-
-    const paid =
+    // Mercado Pago informa la acreditación en el estado
+    // de la orden: processed / accredited.
+    const pagado =
       order.status === "processed" &&
-      order.status_detail === "processed" &&
-      payment?.status === "processed" &&
-      payment?.status_detail === "accredited" &&
-      Number(order.total_amount) > 0 &&
-      Math.abs(
-        Number(order.total_amount) - Number(payment.amount)
-      ) < 0.01;
+      order.status_detail === "accredited";
 
     res.json({
       order_id: order.id,
+      monto: order.total_amount,
       estado: order.status,
       detalle: order.status_detail,
-      estado_pago: payment?.status || null,
-      detalle_pago: payment?.status_detail || null,
-      monto: order.total_amount,
-      paid
+      pagado: pagado
     });
 
   } catch (error) {
-    console.error("CONSULTAR PAGO:", error.details || error.message);
+    console.error(
+      "ERROR CONSULTAR PAGO:",
+      error.details || error.message
+    );
+
     res.status(error.status || 500).json({
-      error: "No se pudo verificar el pago",
-      paid: false,
+      error: "No se pudo consultar el pago",
       detalle: error.details || error.message
     });
   }
 });
 
-// Errores de formato JSON
-app.use((error, req, res, next) => {
-  if (error instanceof SyntaxError && error.status === 400) {
-    return res.status(400).json({ error: "El JSON enviado no es válido" });
-  }
-  next(error);
+
+// --------------------------------------------------
+// ERRORES GENERALES
+// --------------------------------------------------
+
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Ruta no encontrada"
+  });
 });
 
+
+// --------------------------------------------------
+// INICIAR SERVIDOR
+// --------------------------------------------------
+
 app.listen(PORT, () => {
-  console.log(`Servidor de producción activo en puerto ${PORT}`);
+  console.log(`Servidor funcionando en puerto ${PORT}`);
 });
