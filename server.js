@@ -168,6 +168,39 @@ app.post("/admin/crear-orden-prueba", verificarAdmin, async (req, res) => {
   }
 });
 
+app.get("/admin/orden/:id", verificarAdmin, async (req, res) => {
+  try {
+    const respuesta = await fetch(
+      `https://api.mercadopago.com/v1/orders/${encodeURIComponent(req.params.id)}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${MP_TEST_ACCESS_TOKEN}`
+        }
+      }
+    );
+
+    const datos = await respuesta.json();
+
+    return res.status(respuesta.status).json({
+      id: datos.id,
+      status: datos.status,
+      status_detail: datos.status_detail,
+      total_amount: datos.total_amount,
+      expiration_time: datos.expiration_time,
+      config: datos.config,
+      type_response: datos.type_response,
+      transactions: datos.transactions
+    });
+
+  } catch (error) {
+    console.error("Error consultando orden:", error);
+    return res.status(500).json({
+      error: "No se pudo consultar la orden"
+    });
+  }
+});
+
 // Recepción inicial de notificaciones de Mercado Pago
 app.post("/webhooks/mercadopago", (req, res) => {
   console.log("Notificación recibida:", req.body);
