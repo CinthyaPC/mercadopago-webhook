@@ -2,6 +2,7 @@
 const express = require("express");
 
 const app = express();
+const crypto = require("crypto");
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
@@ -107,6 +108,62 @@ app.get("/admin/verificar-prueba", verificarAdmin, async (req, res) => {
 
     return res.status(500).json({
       error: "No se pudo verificar la caja"
+    });
+  }
+});
+
+// Crear una orden de pago de prueba por $50
+app.post("/admin/crear-orden-prueba", verificarAdmin, async (req, res) => {
+  try {
+    if (!MP_TEST_ACCESS_TOKEN) {
+      return res.status(500).json({
+        error: "Falta configurar MP_TEST_ACCESS_TOKEN"
+      });
+    }
+
+    const referencia = `prueba-${Date.now()}`;
+
+    const respuesta = await fetch(
+      "https://api.mercadopago.com/v1/orders",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${MP_TEST_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": crypto.randomUUID()
+        },
+        body: JSON.stringify({
+          type: "qr",
+          total_amount: "50.00",
+          description: "Prueba Sistemas Tecn II",
+          external_reference: referencia,
+          expiration_time: "PT15M",
+          config: {
+            qr: {
+              external_pos_id: "caja1sistemastecnii",
+              mode: "static"
+            }
+          },
+          transactions: {
+            payments: [
+              {
+                amount: "50.00"
+              }
+            ]
+          }
+        })
+      }
+    );
+
+    const datos = await respuesta.json();
+
+    return res.status(respuesta.status).json(datos);
+
+  } catch (error) {
+    console.error("Error creando orden:", error);
+
+    return res.status(500).json({
+      error: "Error interno al crear la orden"
     });
   }
 });
