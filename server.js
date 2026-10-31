@@ -207,7 +207,37 @@ app.post("/webhooks/mercadopago", (req, res) => {
 
   res.sendStatus(200);
 });
+// Obtener el ID de la cuenta real de Mercado Pago
+app.get("/admin/mi-usuario", verificarAdmin, async (req, res) => {
+  try {
+    const respuesta = await fetch(
+      "https://api.mercadolibre.com/users/me",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`
+        }
+      }
+    );
 
+    const datos = await respuesta.json();
+
+    if (!respuesta.ok) {
+      return res.status(respuesta.status).json({
+        error: "No se pudo identificar la cuenta"
+      });
+    }
+
+    return res.json({
+      user_id: datos.id,
+      pais: datos.country_id
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      error: "Error al consultar el usuario"
+    });
+  }
+});
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Servidor funcionando en puerto ${PORT}`);
