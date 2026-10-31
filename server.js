@@ -238,6 +238,66 @@ app.get("/admin/mi-usuario", verificarAdmin, async (req, res) => {
     });
   }
 });
+
+// Crear sucursal en Mercado Pago de producción
+app.post("/admin/crear-sucursal-produccion", verificarAdmin, async (req, res) => {
+  try {
+    const token = process.env.MP_ACCESS_TOKEN;
+
+    if (!token || !process.env.MP_USER_ID) {
+      return res.status(500).json({
+        error: "Falta configurar MP_ACCESS_TOKEN o MP_USER_ID"
+      });
+    }
+
+    const respuesta = await fetch(
+      `https://api.mercadopago.com/users/${process.env.MP_USER_ID}/stores`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: "Sistemas Tecn II",
+          external_id: "sistemastecnii-produccion",
+          location: {
+            street_name: "San Matias",
+            street_number: "88",
+            city_name: "San Fernando del Valle de Catamarca",
+            state_name: "Catamarca",
+            latitude: -28.495044,
+            longitude: -65.803691,
+            reference: "San Matias 88"
+          }
+        })
+      }
+    );
+
+    const datos = await respuesta.json();
+
+    if (!respuesta.ok) {
+      return res.status(respuesta.status).json({
+        error: "Mercado Pago no pudo crear la sucursal",
+        detalle: datos
+      });
+    }
+
+    return res.json({
+      id: datos.id,
+      nombre: datos.name,
+      external_id: datos.external_id,
+      ubicacion: datos.location
+    });
+
+  } catch (error) {
+    console.error("Error creando sucursal:", error);
+    return res.status(500).json({
+      error: "Error interno al crear la sucursal"
+    });
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Servidor funcionando en puerto ${PORT}`);
