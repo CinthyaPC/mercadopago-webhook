@@ -235,7 +235,7 @@ app.post("/esp32/crear-orden", esp32Auth, async (req, res) => {
         total_amount: importe,
         description: "Compra - Sistemas Tecn II",
         external_reference: `ESP32-${requestId}`,
-        expiration_time: "PT15M",
+        expiration_time: "PT3M",
 
         config: {
           qr: {
